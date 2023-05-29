@@ -2,7 +2,8 @@
 #include <LoRa.h>
 #include <Wire.h>
 #include <SSD1306.h>
-
+#include <Adafruit_AHT10.h>
+#include <adafruit_sensor.h>
 
 //Deixe esta linha descomentada para compilar o Master
 //Comente ou remova para compilar o Slave
@@ -21,6 +22,12 @@
 const String GETDATA = "getdata";
 //Constante que o Slave retorna junto com os dados para o Master
 const String SETDATA = "setdata=";
+
+//Estrutura com os dados do sensor
+typedef struct {
+  double temperature;
+  double humidity;
+}Data;
 
 //Variável para controlar o display
 SSD1306 display(0x3c, 4, 15);
@@ -41,6 +48,7 @@ void setupDisplay(){
   display.setFont(ArialMT_Plain_10);
   display.setTextAlignment(TEXT_ALIGN_LEFT);
 }
+
 //Configurações iniciais do LoRa
 void setupLoRa(){ 
   //Inicializa a comunicação
@@ -70,14 +78,16 @@ void send(){
   //Finaliza e envia o pacote
   LoRa.endPacket();
 }
+
 //Compila apenas se MASTER estiver definido no arquivo principal
 #ifdef MASTER
 
 //Intervalo entre os envios
-#define INTERVAL 500
+#define INTERVAL 1500
 
 //Tempo do último envio
 long lastSendTime = 0;
+
 void setup(){
   Serial.begin(115200);
   //Chama a configuração inicial do display
@@ -89,6 +99,7 @@ void setup(){
   display.drawString(0, 0, "Master");
   display.display();
 }
+
 void loop(){
   //Se passou o tempo definido em INTERVAL desde o último envio
   if (millis() - lastSendTime > INTERVAL){
@@ -101,6 +112,7 @@ void loop(){
   //Verificamos se há pacotes para recebermos
   receive();
 }
+
 void receive(){
   //Tentamos ler o pacote
   int packetSize = LoRa.parsePacket();
@@ -109,28 +121,32 @@ void receive(){
   if (packetSize > SETDATA.length()){
     String received = "";
     //Armazena os dados do pacote em uma string
-    while(LoRa.available()){
+    for(int i=0; i<SETDATA.length(); i++){
       received += (char) LoRa.read();
     }
-    //Verifica se a string possui o que está contido em "SETDATA"
-    int index = received.indexOf(SETDATA);
 
-
-    if(index >= 0){
-      //Recuperamos a string que está após o "SETDATA",
-      //que no caso serão os dados de nosso interesse
-      String data = received.substring(SETDATA.length());
-      //Tempo que demorou para o Master criar o pacote, enviar o pacote,
-      //o Slave receber, fazer a leitura, criar um novo pacote, enviá-lo
-      //e o Master receber e ler
-      String waiting = String(millis() - lastSendTime);
-      //Mostra no display os dados e o tempo que a operação demorou
-      display.clear();
-      display.drawString(0, 0, "Recebeu: " + data);
-      display.drawString(0, 10, "Tempo: " + waiting + "ms");
-      display.display();
+    //Se o cabeçalho é o que esperamos
+    if(received.equals(SETDATA)){
+      //Fazemos a leitura dos dados
+      Data data;
+      LoRa.readBytes((uint8_t*)&data, sizeof(data));
+      //Mostramos os dados no display
+      showData(data);
     }
   }
+}
+
+void showData(Data data){
+  //Tempo que demorou para o Master criar o pacote, enviar o pacote,
+  //o Slave receber, fazer a leitura, criar um novo pacote, enviá-lo
+  //e o Master receber e ler
+  String waiting = String(millis() - lastSendTime);
+  //Mostra no display os dados e o tempo que a operação demorou
+  display.clear();
+  display.drawString(0, 0, String(data.temperature) + " C");
+  display.drawString(0, 16, String(data.humidity) + "%");
+  display.drawString(0, 32, waiting + " ms");
+  display.display();
 }
 
 #endif
@@ -138,19 +154,29 @@ void receive(){
 //Compila apenas se MASTER não estiver definido no arquivo principal
 #ifndef MASTER
 
-//Contador que irá servir como o dados que o Slave irá enviar
-int count = 0;
+
+//Responsável pela leitura da temperatura e umidade
+Adafruit_AHT10 aht;
 
 void setup(){
-    Serial.begin(9600);
-    //Chama a configuração inicial do display
-    setupDisplay();
-          
-    //Chama a configuração inicial do LoRa
-    setupLoRa();
+  Serial.begin(115200);
+  //Chama a configuração inicial do display
+  setupDisplay();
+  //Chama a configuração inicial do LoRa
+  setupLoRa();
+
+  
+  if (! aht.begin())
+  {
     display.clear();
-    display.drawString(0, 0, "Slave esperando...");
+    display.drawString(0, 0, "Sensor não encontrado");
     display.display();
+    while(1);
+  }
+
+  display.clear();
+  display.drawString(0, 0, "Slave esperando...");
+  display.display();
 }
 
 void loop(){
@@ -158,37 +184,52 @@ void loop(){
   int packetSize = LoRa.parsePacket();
 
   //Verifica se o pacote possui a quantidade de caracteres que esperamos
-  if (packetSize == GETDATA.length()){
+  if (packetSize == GETDATA.length())
+  {
     String received = "";
 
     //Armazena os dados do pacote em uma string
-    while(LoRa.available()){
+    while(LoRa.available())
+    {
       received += (char) LoRa.read();
     }
 
-    if(received.equals(GETDATA)){
-      //Simula a leitura dos dados
-      String data = readData();
+    if(received.equals(GETDATA))
+    {
+      //Faz a leitura dos dados
+      Data data = readData();
       Serial.println("Criando pacote para envio");
       //Cria o pacote para envio
       LoRa.beginPacket();
-      LoRa.print(SETDATA + data);
+      LoRa.print(SETDATA);
+      LoRa.write((uint8_t*)&data, sizeof(data));
       //Finaliza e envia o pacote
       LoRa.endPacket();
-      //Mostra no display
-      display.clear();
-      display.drawString(0, 0, "Enviou: " + String(data));
-      display.display();
+      showSentData(data);
     }
   }
 }
 
-//Função onde se faz a leitura dos dados que queira enviar
-//Poderia ser o valor lido por algum sensor por exemplo
-//Aqui vamos enviar apenas um contador para testes
-//mas você pode alterar a função para fazer a leitura de algum sensor
-String readData(){
-  return String(count++);
+//Função onde se faz a leitura dos dados
+Data readData()
+{
+  Data data;
+  sensors_event_t humidity, temp;
+  aht.getEvent(&humidity, &temp);
+  
+  data.temperature = temp.temperature;
+  data.humidity = humidity.relative_humidity;
+  return data;
+}
+
+void showSentData(Data data)
+{
+  //Mostra no display
+  display.clear();
+  display.drawString(0, 0, "Enviou:");
+  display.drawString(0, 16,  String(data.temperature) + " C");
+  display.drawString(0, 32, String(data.humidity) + "%");
+  display.display();
 }
 
 #endif
