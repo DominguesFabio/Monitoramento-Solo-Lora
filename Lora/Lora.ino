@@ -4,6 +4,7 @@
 #include <SSD1306.h>
 #include <Adafruit_AHT10.h>
 #include <adafruit_sensor.h>
+#include <Adafruit_MPU6050.h>
 
 //Deixe esta linha descomentada para compilar o Master
 //Comente ou remova para compilar o Slave
@@ -27,6 +28,9 @@ const String SETDATA = "setdata=";
 typedef struct {
   double temperature;
   double humidity;
+  double x;
+  double y;
+  double z;
 }Data;
 
 //Variável para controlar o display
@@ -144,8 +148,11 @@ void showData(Data data){
   //Mostra no display os dados e o tempo que a operação demorou
   display.clear();
   display.drawString(0, 0, String(data.temperature) + " C");
-  display.drawString(0, 16, String(data.humidity) + "%");
-  display.drawString(0, 32, waiting + " ms");
+  display.drawString(0, 8, String(data.humidity) + "%");
+  display.drawString(0, 16, "X - " + String(data.x) );
+  display.drawString(0, 24, "Y - " + String(data.y) );
+  display.drawString(0, 36, "Z - " + String(data.z) );
+  display.drawString(0, 48, waiting + " ms");
   display.display();
 }
 
@@ -157,6 +164,7 @@ void showData(Data data){
 
 //Responsável pela leitura da temperatura e umidade
 Adafruit_AHT10 aht;
+Adafruit_MPU6050 mpu;
 
 void setup(){
   Serial.begin(115200);
@@ -165,6 +173,11 @@ void setup(){
   //Chama a configuração inicial do LoRa
   setupLoRa();
 
+  if (!mpu.begin()) {
+    Serial.println("Sensor init failed");
+    while (1)
+      yield();
+  }
   
   if (! aht.begin())
   {
@@ -219,6 +232,13 @@ Data readData()
   
   data.temperature = temp.temperature;
   data.humidity = humidity.relative_humidity;
+
+  sensors_event_t a, g;
+  mpu.getEvent(&a, &g, &temp);
+
+  data.x = a.acceleration.x;
+  data.z = a.acceleration.z;
+  data.y = a.acceleration.y;
   return data;
 }
 
@@ -227,8 +247,11 @@ void showSentData(Data data)
   //Mostra no display
   display.clear();
   display.drawString(0, 0, "Enviou:");
-  display.drawString(0, 16,  String(data.temperature) + " C");
-  display.drawString(0, 32, String(data.humidity) + "%");
+  display.drawString(0, 10,  String(data.temperature) + " C");
+  display.drawString(0, 20, String(data.humidity) + "%");
+  display.drawString(0, 30, "X - " + String(data.x) );
+  display.drawString(0, 40, "Y - " + String(data.y) );
+  display.drawString(0, 50, "Z - " + String(data.z) );
   display.display();
 }
 
